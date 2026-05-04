@@ -4,7 +4,9 @@ import sys
 from PyQt5.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -52,6 +54,7 @@ class PlayerWorker(QObject):
         ring_buffer_blocks,
         prefill_blocks,
         band_gains_db,
+        effect_settings,
     ):
         super().__init__()
         self.player = EqualizerPlayer(
@@ -62,6 +65,7 @@ class PlayerWorker(QObject):
             ring_buffer_blocks=ring_buffer_blocks,
             prefill_blocks=prefill_blocks,
             band_gains_db=band_gains_db,
+            effect_settings=effect_settings,
         )
 
     def run(self):
@@ -77,6 +81,9 @@ class PlayerWorker(QObject):
 
     def set_band_gain(self, band_number, gain_db):
         self.player.set_band_gain(band_number, gain_db)
+
+    def set_effect_settings(self, effect_settings):
+        self.player.set_effect_settings(effect_settings)
 
 
 class MainWindow(QMainWindow):
@@ -103,7 +110,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(self.build_buttons())
 
         self.setCentralWidget(central)
-        self.resize(1080, 560)
+        self.resize(1080, 680)
 
     def build_file_group(self):
         group = QGroupBox("Файл")
@@ -163,13 +170,62 @@ class MainWindow(QMainWindow):
 
     def build_effect_group(self):
         group = QGroupBox("Эффекты")
-        layout = QHBoxLayout(group)
+        layout = QGridLayout(group)
 
-        layout.addWidget(QLabel("1: реверберация"))
-        layout.addWidget(QLabel("2: вибрато"))
-        layout.addStretch(1)
+        self.reverb_enabled = QCheckBox("Реверберация")
+        self.reverb_enabled.setChecked(True)
+        self.reverb_delay_ms = self.build_double_spinbox(1, 1000, 70, 1, " мс")
+        self.reverb_feedback = self.build_double_spinbox(0, 95, 35, 1, " %")
+        self.reverb_mix = self.build_double_spinbox(0, 100, 25, 1, " %")
+
+        self.vibrato_enabled = QCheckBox("Вибрато")
+        self.vibrato_enabled.setChecked(True)
+        self.vibrato_rate_hz = self.build_double_spinbox(0.1, 20, 5, 0.1, " Гц")
+        self.vibrato_depth_ms = self.build_double_spinbox(0, 30, 6, 0.5, " мс")
+        self.vibrato_mix = self.build_double_spinbox(0, 100, 45, 1, " %")
+
+        layout.addWidget(self.reverb_enabled, 0, 0)
+        layout.addWidget(QLabel("Задержка"), 0, 1)
+        layout.addWidget(self.reverb_delay_ms, 0, 2)
+        layout.addWidget(QLabel("Обратная связь"), 0, 3)
+        layout.addWidget(self.reverb_feedback, 0, 4)
+        layout.addWidget(QLabel("Mix"), 0, 5)
+        layout.addWidget(self.reverb_mix, 0, 6)
+
+        layout.addWidget(self.vibrato_enabled, 1, 0)
+        layout.addWidget(QLabel("Частота"), 1, 1)
+        layout.addWidget(self.vibrato_rate_hz, 1, 2)
+        layout.addWidget(QLabel("Глубина"), 1, 3)
+        layout.addWidget(self.vibrato_depth_ms, 1, 4)
+        layout.addWidget(QLabel("Mix"), 1, 5)
+        layout.addWidget(self.vibrato_mix, 1, 6)
+
+        controls = [
+            self.reverb_enabled,
+            self.reverb_delay_ms,
+            self.reverb_feedback,
+            self.reverb_mix,
+            self.vibrato_enabled,
+            self.vibrato_rate_hz,
+            self.vibrato_depth_ms,
+            self.vibrato_mix,
+        ]
+        for control in controls:
+            if isinstance(control, QCheckBox):
+                control.stateChanged.connect(self.change_effect_settings)
+            else:
+                control.valueChanged.connect(self.change_effect_settings)
 
         return group
+
+    def build_double_spinbox(self, low, high, value, step, suffix):
+        spinbox = QDoubleSpinBox()
+        spinbox.setRange(low, high)
+        spinbox.setSingleStep(step)
+        spinbox.setValue(value)
+        spinbox.setSuffix(suffix)
+        spinbox.setDecimals(1 if isinstance(step, float) and step < 1 else 0)
+        return spinbox
 
     def build_band_group(self):
         group = QGroupBox("10 полос эквалайзера, дБ")
@@ -236,14 +292,31 @@ class MainWindow(QMainWindow):
             for band_number, slider in self.gain_sliders.items()
         }
 
+    def current_effect_settings(self):
+        return {
+            "reverb_enabled": self.reverb_enabled.isChecked(),
+            "reverb_delay_ms": self.reverb_delay_ms.value(),
+            "reverb_feedback": self.reverb_feedback.value() / 100,
+            "reverb_mix": self.reverb_mix.value() / 100,
+            "vibrato_enabled": self.vibrato_enabled.isChecked(),
+            "vibrato_rate_hz": self.vibrato_rate_hz.value(),
+            "vibrato_depth_ms": self.vibrato_depth_ms.value(),
+            "vibrato_mix": self.vibrato_mix.value() / 100,
+        }
+
     def change_band_gain(self, band_number, gain_db):
         self.gain_labels[band_number].setText(f"{gain_db} dB")
 
         if self.worker is not None:
             self.worker.set_band_gain(band_number, gain_db)
 
+    def change_effect_settings(self, *_args):
+        if self.worker is not None:
+            self.worker.set_effect_settings(self.current_effect_settings())
+
     def start_playback(self):
         if not self.file_path:
+            self.status_label.setText("Выберите WAV-файл")
             return
 
         if self.worker is not None:
@@ -259,6 +332,7 @@ class MainWindow(QMainWindow):
             ring_buffer_blocks=self.ring_buffer_blocks.value(),
             prefill_blocks=self.prefill_blocks.value(),
             band_gains_db=self.current_band_gains(),
+            effect_settings=self.current_effect_settings(),
         )
         self.worker.moveToThread(self.thread)
 
