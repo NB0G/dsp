@@ -31,6 +31,21 @@ def build_hamming_window(size):
     ]
 
 
+def build_chebyshev_window(size, attenuation_db=80):
+    if size <= 1:
+        return [1]
+
+    if np is None:
+        return build_hamming_window(size)
+
+    try:
+        from scipy.signal.windows import chebwin
+
+        return chebwin(size, at=attenuation_db, sym=True).tolist()
+    except Exception:
+        return build_hamming_window(size)
+
+
 def apply_window(kernel, window):
     return [
         kernel_value * window_value

@@ -1,7 +1,7 @@
 import os
 import sys
 
-from PyQt5.QtCore import QObject, QThread, pyqtSignal
+from PyQt5.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
@@ -17,10 +17,10 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PyQt5.QtCore import Qt
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from filters.equalizer_bands import EQUALIZER_BANDS
 from play_wav import (
     BUFFER_MODE_DUAL_THREAD,
     BUFFER_MODE_SINGLE_THREAD,
@@ -28,20 +28,14 @@ from play_wav import (
     DEFAULT_PREFILL_BLOCKS,
     DEFAULT_RING_BUFFER_BLOCKS,
     EqualizerPlayer,
-    FILTER_TYPE_CHEBYSHEV,
-    FILTER_TYPE_SINC,
+    FILTER_TYPE_CHEBYSHEV2_IIR,
+    FILTER_TYPE_CHEBYSHEV_WINDOW_FIR,
 )
 
 
 BANDS = [
-    (1, "0-100"),
-    (2, "100-300"),
-    (3, "300-700"),
-    (4, "700-1500"),
-    (5, "1500-3100"),
-    (6, "3100-6300"),
-    (7, "6300-12700"),
-    (8, "12700-22050"),
+    (index, f"{low_hz}-{high_hz}")
+    for index, (low_hz, high_hz) in enumerate(EQUALIZER_BANDS, start=1)
 ]
 
 
@@ -104,11 +98,12 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.build_file_group())
         layout.addWidget(self.build_buffer_group())
+        layout.addWidget(self.build_effect_group())
         layout.addWidget(self.build_band_group())
         layout.addLayout(self.build_buttons())
 
         self.setCentralWidget(central)
-        self.resize(920, 520)
+        self.resize(1080, 560)
 
     def build_file_group(self):
         group = QGroupBox("Файл")
@@ -123,7 +118,7 @@ class MainWindow(QMainWindow):
         return group
 
     def build_buffer_group(self):
-        group = QGroupBox("Буфер")
+        group = QGroupBox("Буфер и фильтр")
         layout = QGridLayout(group)
 
         self.buffer_mode = QComboBox()
@@ -131,8 +126,14 @@ class MainWindow(QMainWindow):
         self.buffer_mode.addItem("Однопоточный", BUFFER_MODE_SINGLE_THREAD)
 
         self.filter_type = QComboBox()
-        self.filter_type.addItem("Окно Хемминга FIR", FILTER_TYPE_SINC)
-        self.filter_type.addItem("Чебышев I рода IIR", FILTER_TYPE_CHEBYSHEV)
+        self.filter_type.addItem(
+            "КИХ, окно Чебышева",
+            FILTER_TYPE_CHEBYSHEV_WINDOW_FIR,
+        )
+        self.filter_type.addItem(
+            "БИХ, Чебышев II рода",
+            FILTER_TYPE_CHEBYSHEV2_IIR,
+        )
 
         self.block_size = QSpinBox()
         self.block_size.setRange(64, 8192)
@@ -160,8 +161,18 @@ class MainWindow(QMainWindow):
 
         return group
 
+    def build_effect_group(self):
+        group = QGroupBox("Эффекты")
+        layout = QHBoxLayout(group)
+
+        layout.addWidget(QLabel("1: реверберация"))
+        layout.addWidget(QLabel("2: вибрато"))
+        layout.addStretch(1)
+
+        return group
+
     def build_band_group(self):
-        group = QGroupBox("Полосы, дБ")
+        group = QGroupBox("10 полос эквалайзера, дБ")
         layout = QHBoxLayout(group)
 
         for band_number, label_text in BANDS:

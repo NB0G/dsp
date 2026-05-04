@@ -2,17 +2,19 @@
 
 Этот файл предназначен для будущей нейросети или разработчика, который будет поддерживать проект.
 
-Проект - учебный программный аудиопроигрыватель с 8-полосным эквалайзером, двумя типами кольцевого буфера и двумя семействами фильтров.
+Проект - учебный программный аудиопроигрыватель с 10-полосным эквалайзером, двумя типами кольцевого буфера, двумя типами фильтров и двумя аудиоэффектами.
 
-## Главное ограничение
+## Текущее задание
 
-Фильтры Чебышева I рода должны строиться по формуле АЧХ:
+- 1 эффект: реверберация.
+- 2 эффект: вибрато.
+- Количество полос эквалайзера: 10.
+- Основной тип фильтра: КИХ, окно Чебышева.
+- Альтернативный тип фильтра: БИХ, Чебышев II рода.
 
-```text
-H(w) = 1 / sqrt(1 + epsilon^2 * Tn^2(w / w0))
-```
+## Ограничение по DSP
 
-Нельзя использовать готовое проектирование фильтра из `scipy.signal`, например:
+Не использовать готовое проектирование фильтра из `scipy.signal`, например:
 
 ```python
 cheby1
@@ -22,308 +24,116 @@ sosfilt
 lfilter
 ```
 
-Разрешено использовать преобразования Фурье из SciPy, например:
+SciPy можно использовать как вычислительный инструмент для FFT и оконных функций, но важная DSP-логика проекта должна оставаться явно видимой в коде.
 
-```python
-scipy.fft.rfft
-scipy.fft.irfft
-scipy.fft.rfftfreq
-scipy.fft.fftshift
-```
-
-То есть SciPy можно использовать как вычислительный инструмент, но не как готовый генератор фильтра.
-
-## Структура проекта
+## Структура
 
 ```text
 play_wav.py
 util.py
+effects.py
 
 buffers/
   dual_thread_ring_buffer.py
   single_thread_ring_buffer.py
 
 filters/
+  equalizer_bands.py
   sinc/
-    lowpass_sinc_filter.py
-    band_pass_filter.py
-    highpass_sinc_filter.py
-
+    sinc_filter_bank.py
   chebyshev/
-    chebyshev_lowpass_filter.py
-    chebyshev_bandpass_filter.py
-    chebyshev_highpass_filter.py
     chebyshev_filter_bank.py
+  chebyshev2/
+    chebyshev2_filter_bank.py
 
 ui/
   main_window.py
 ```
 
-## `play_wav.py`
+## Главный поток обработки
 
-Главный модуль воспроизведения.
-
-Содержит:
-
-- чтение WAV;
-- перевод stereo в mono;
-- конвертацию PCM bytes <-> samples;
-- выбор типа буфера;
-- выбор типа фильтра;
-- запуск воспроизведения через PyAudio;
-- класс `EqualizerPlayer`.
-
-Важные константы:
-
-```python
-BUFFER_MODE_DUAL_THREAD = "dual_thread"
-BUFFER_MODE_SINGLE_THREAD = "single_thread"
-FILTER_TYPE_SINC = "sinc"
-FILTER_TYPE_CHEBYSHEV = "chebyshev"
-```
-
-Функция `build_filter_bank(...)` выбирает семейство фильтров.
-
-Для Sinc FIR возвращается список из 8 потоковых фильтров.
-
-Для Чебышева возвращается один объект:
-
-```python
-ChebyshevFilterBank
-```
-
-Поэтому `process_samples_with_filter_bank(...)` поддерживает оба случая:
-
-```python
-if hasattr(filters, "process_samples"):
-    return filters.process_samples(samples)
-```
-
-## Буферы
-
-### `buffers/dual_thread_ring_buffer.py`
-
-Двухпоточный кольцевой буфер.
-
-Используется в режиме:
-
-```python
-BUFFER_MODE_DUAL_THREAD
-```
-
-Схема:
+`EqualizerPlayer` в `play_wav.py` читает WAV, переводит stereo в mono, строит банк фильтров и цепочку эффектов:
 
 ```text
-producer thread -> RingBufferDualThread -> PyAudio callback
+read wav -> equalizer filter bank -> reverb -> vibrato -> ring buffer -> PyAudio
 ```
 
-Внутри используется `Condition`, потому что один поток пишет, другой читает.
+Эффекты находятся в `effects.py`:
 
-### `buffers/single_thread_ring_buffer.py`
+- `ReverbEffect` - задержка с обратной связью и wet/dry mix.
+- `VibratoEffect` - модулированная линия задержки с дробным чтением.
+- `AudioEffectChain` - применяет реверберацию, затем вибрато.
 
-Однопоточный кольцевой буфер.
+## Полосы эквалайзера
 
-Используется в режиме:
-
-```python
-BUFFER_MODE_SINGLE_THREAD
-```
-
-Схема:
+Единственный источник правды для полос - `filters/equalizer_bands.py`.
 
 ```text
-read wav -> filter -> write buffer -> read buffer -> stream.write
+1: 0-31 Hz
+2: 31-62 Hz
+3: 62-125 Hz
+4: 125-250 Hz
+5: 250-500 Hz
+6: 500-1000 Hz
+7: 1000-2000 Hz
+8: 2000-4000 Hz
+9: 4000-8000 Hz
+10: 8000-22050 Hz
 ```
 
-Блокировок нет, потому что всё происходит в одном потоке.
+Полоса 1 - НЧ, полосы 2-9 - полосовые, полоса 10 - ВЧ.
 
-## Sinc FIR фильтры
+## Типы фильтров
 
-Лежат в:
-
-```text
-filters/sinc/
-```
-
-Файлы:
-
-- `lowpass_sinc_filter.py`
-- `band_pass_filter.py`
-- `highpass_sinc_filter.py`
-
-Эти фильтры строят FIR-ядра напрямую и используют `StreamingFirFilter` из `util.py`.
-
-Окно Хэмминга используется для сглаживания обрезанного ядра.
-
-## Чебышев I рода
-
-Лежит в:
-
-```text
-filters/chebyshev/
-```
-
-Главная формула АЧХ находится в `util.py`:
+Константы в `play_wav.py`:
 
 ```python
-def chebyshev_gain_by_ratio(frequency_ratio, order, epsilon):
-    chebyshev_value = chebyshev_polynomial(order, frequency_ratio)
-    return 1 / math.sqrt(1 + epsilon * epsilon * chebyshev_value * chebyshev_value)
+FILTER_TYPE_CHEBYSHEV_WINDOW_FIR = "chebyshev_window_fir"
+FILTER_TYPE_CHEBYSHEV2_IIR = "chebyshev2_iir"
 ```
 
-Многочлен Чебышева:
+Для совместимости старые имена оставлены алиасами:
 
 ```python
-def chebyshev_polynomial(order, x):
+FILTER_TYPE_SINC = FILTER_TYPE_CHEBYSHEV_WINDOW_FIR
+FILTER_TYPE_CHEBYSHEV = FILTER_TYPE_CHEBYSHEV2_IIR
 ```
 
-Перевод ripple в epsilon:
+### Основной фильтр
 
-```python
-def ripple_db_to_epsilon(ripple_db):
-```
+`filters/sinc/sinc_filter_bank.py` теперь содержит `ChebyshevWindowFirFilterBank`.
 
-### Отдельные формулы
+Банк строит суммарную АЧХ 10 полос, получает FIR-ядро через `irfft`, берет центральный участок и применяет окно Чебышева через `build_chebyshev_window(...)` из `util.py`.
 
-НЧ:
+### Альтернативный фильтр
 
-```python
-chebyshev_low_pass_gain(...)
-```
+`filters/chebyshev2/chebyshev2_filter_bank.py` содержит `Chebyshev2FilterBank`.
 
-ПФ:
-
-```python
-chebyshev_band_pass_gain(...)
-```
-
-ВЧ:
-
-```python
-chebyshev_high_pass_gain(...)
-```
-
-### `chebyshev_filter_bank.py`
-
-Это 8-полосный банк Чебышева для реального воспроизведения.
-
-Он не должен использовать `scipy.signal.cheby1`.
-
-Текущая идея:
-
-1. По формуле Чебышева считается суммарная АЧХ 8 полос.
-2. Через `irfft` получается импульсная характеристика.
-3. Берётся центральный кусок длиной `DEFAULT_TAP_COUNT`.
-4. К нему применяется окно Хэмминга.
-5. Получается FIR-ядро.
-6. Звук фильтруется потоковой свёрткой с историей сэмплов.
-
-Это сделано, чтобы не обрабатывать каждый аудиоблок как отдельный FFT-кусок. Блочная FFT-обработка без overlap/save или overlap/add давала щелчки на границах блоков.
+Формулы АЧХ Чебышева II рода прописаны явно, без `scipy.signal.cheby2`. Для потоковой обработки используется общий `StreamingFirFilter`, как и в остальных банках проекта.
 
 ## UI
 
-Главный файл:
-
-```text
-ui/main_window.py
-```
+Главный файл интерфейса - `ui/main_window.py`.
 
 Интерфейс позволяет:
 
 - выбрать WAV-файл;
 - выбрать тип буфера;
-- выбрать тип фильтра;
-- изменить размер аудиоблока;
-- изменить число блоков кольцевого буфера;
-- изменить предзаполнение;
-- изменить усиление каждой из 8 полос от `0 dB` до `-100 dB`;
-- старт/стоп воспроизведения.
+- выбрать основной или альтернативный тип фильтра;
+- изменить размер аудиоблока, размер кольцевого буфера и предзаполнение;
+- изменить усиление каждой из 10 полос от `0 dB` до `-100 dB`;
+- запустить и остановить воспроизведение.
 
-Кнопка `Стоп` должна сбрасывать воспроизведение, но не закрывать приложение.
+## Проверка
 
-## Полосы эквалайзера
-
-```text
-1: 0-100 Hz
-2: 100-300 Hz
-3: 300-700 Hz
-4: 700-1500 Hz
-5: 1500-3100 Hz
-6: 3100-6300 Hz
-7: 6300-12700 Hz
-8: 12700-22050 Hz
-```
-
-Полоса 1 - НЧ.
-
-Полосы 2-7 - полосовые.
-
-Полоса 8 - ВЧ.
-
-## Усиление полос
-
-UI передаёт значения в dB:
-
-```text
-0 ... -100
-```
-
-Перевод в линейный коэффициент:
-
-```python
-def db_to_gain(db):
-    return 10 ** (db / 20)
-```
-
-При движении слайдера вызывается:
-
-```python
-set_band_gain(band_number, gain_db)
-```
-
-Для Sinc FIR меняется gain конкретного фильтра.
-
-Для Чебышева пересобирается суммарное FIR-ядро.
-
-## Что делать при щелчках
-
-Проверять в таком порядке:
-
-1. Клиппинг после суммирования полос.
-2. Слишком маленький `block_size`.
-3. Слишком маленький `ring_buffer_blocks`.
-4. Слишком маленький `prefill_blocks` для двухпоточного режима.
-5. Непрерывность состояния фильтра между блоками.
-6. Слишком короткое FIR-ядро.
-
-Для Чебышева вероятный источник щелчков - слишком короткий `DEFAULT_TAP_COUNT` или слишком резкие переходы АЧХ.
-
-## Проверка после изменений
-
-Минимальная проверка:
+Минимальная проверка после изменений:
 
 ```powershell
-python -m py_compile util.py play_wav.py ui\main_window.py filters\sinc\*.py filters\chebyshev\*.py buffers\*.py
+python -m py_compile util.py effects.py play_wav.py ui\main_window.py filters\equalizer_bands.py filters\sinc\*.py filters\chebyshev\*.py filters\chebyshev2\*.py buffers\*.py
 ```
 
-Запуск UI:
+Если `python` не настроен в PATH, использовать установленный Python 3.12:
 
 ```powershell
-python ui\main_window.py
+& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m py_compile ...
 ```
-
-## Стиль проекта
-
-Это учебный проект. Код должен быть простым и понятным.
-
-Не добавлять сложные абстракции без необходимости.
-
-Не прятать важную DSP-математику за готовыми библиотечными функциями, если по ТЗ требуется реализация формулы.
-
-Сторонние библиотеки допустимы для:
-
-- PyAudio;
-- PyQt5;
-- FFT из SciPy.
-
-Сторонние библиотеки не должны использоваться для готового синтеза Чебышевских фильтров.
