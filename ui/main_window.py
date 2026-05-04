@@ -4,6 +4,7 @@ import sys
 from PyQt5.QtCore import QObject, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QGridLayout,
@@ -56,6 +57,7 @@ class PlayerWorker(QObject):
         ring_buffer_blocks,
         prefill_blocks,
         band_gains_db,
+        effect_settings,
     ):
         super().__init__()
         self.player = EqualizerPlayer(
@@ -66,6 +68,7 @@ class PlayerWorker(QObject):
             ring_buffer_blocks=ring_buffer_blocks,
             prefill_blocks=prefill_blocks,
             band_gains_db=band_gains_db,
+            effect_settings=effect_settings,
         )
 
     def run(self):
@@ -81,6 +84,9 @@ class PlayerWorker(QObject):
 
     def set_band_gain(self, band_number, gain_db):
         self.player.set_band_gain(band_number, gain_db)
+
+    def set_effect_settings(self, effect_settings):
+        self.player.set_effect_settings(effect_settings)
 
 
 class MainWindow(QMainWindow):
@@ -102,11 +108,12 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.build_file_group())
         layout.addWidget(self.build_buffer_group())
+        layout.addWidget(self.build_effects_group())
         layout.addWidget(self.build_band_group())
         layout.addLayout(self.build_buttons())
 
         self.setCentralWidget(central)
-        self.resize(920, 520)
+        self.resize(920, 650)
 
     def build_file_group(self):
         group = QGroupBox("Файл")
@@ -158,6 +165,57 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.ring_buffer_blocks, 1, 3)
         layout.addWidget(QLabel("Предзаполнение"), 2, 0)
         layout.addWidget(self.prefill_blocks, 2, 1)
+
+        return group
+
+    def build_effects_group(self):
+        group = QGroupBox("Эффекты")
+        layout = QGridLayout(group)
+
+        self.echo_enabled = QCheckBox("Эхо")
+        self.echo_enabled.setChecked(True)
+        self.echo_enabled.stateChanged.connect(self.change_effect_settings)
+
+        self.echo_delay_ms = QSpinBox()
+        self.echo_delay_ms.setRange(20, 1200)
+        self.echo_delay_ms.setSingleStep(10)
+        self.echo_delay_ms.setValue(280)
+        self.echo_delay_ms.setSuffix(" мс")
+        self.echo_delay_ms.valueChanged.connect(self.change_effect_settings)
+
+        self.echo_feedback = QSpinBox()
+        self.echo_feedback.setRange(0, 95)
+        self.echo_feedback.setValue(35)
+        self.echo_feedback.setSuffix(" %")
+        self.echo_feedback.valueChanged.connect(self.change_effect_settings)
+
+        self.echo_mix = QSpinBox()
+        self.echo_mix.setRange(0, 100)
+        self.echo_mix.setValue(35)
+        self.echo_mix.setSuffix(" %")
+        self.echo_mix.valueChanged.connect(self.change_effect_settings)
+
+        self.clipping_enabled = QCheckBox("Клиппинг")
+        self.clipping_enabled.setChecked(True)
+        self.clipping_enabled.stateChanged.connect(self.change_effect_settings)
+
+        self.clipping_threshold = QSpinBox()
+        self.clipping_threshold.setRange(100, 32767)
+        self.clipping_threshold.setSingleStep(10)
+        self.clipping_threshold.setValue(1000)
+        self.clipping_threshold.valueChanged.connect(self.change_effect_settings)
+
+        layout.addWidget(self.echo_enabled, 0, 0)
+        layout.addWidget(QLabel("Задержка"), 0, 1)
+        layout.addWidget(self.echo_delay_ms, 0, 2)
+        layout.addWidget(QLabel("Обратная связь"), 0, 3)
+        layout.addWidget(self.echo_feedback, 0, 4)
+        layout.addWidget(QLabel("Смешивание"), 0, 5)
+        layout.addWidget(self.echo_mix, 0, 6)
+
+        layout.addWidget(self.clipping_enabled, 1, 0)
+        layout.addWidget(QLabel("Порог"), 1, 1)
+        layout.addWidget(self.clipping_threshold, 1, 2)
 
         return group
 
@@ -226,11 +284,25 @@ class MainWindow(QMainWindow):
             for band_number, slider in self.gain_sliders.items()
         }
 
+    def current_effect_settings(self):
+        return {
+            "echo_enabled": self.echo_enabled.isChecked(),
+            "clipping_enabled": self.clipping_enabled.isChecked(),
+            "echo_delay_seconds": self.echo_delay_ms.value() / 1000,
+            "echo_feedback": self.echo_feedback.value() / 100,
+            "echo_mix": self.echo_mix.value() / 100,
+            "clipping_threshold": self.clipping_threshold.value(),
+        }
+
     def change_band_gain(self, band_number, gain_db):
         self.gain_labels[band_number].setText(f"{gain_db} dB")
 
         if self.worker is not None:
             self.worker.set_band_gain(band_number, gain_db)
+
+    def change_effect_settings(self, *_args):
+        if self.worker is not None:
+            self.worker.set_effect_settings(self.current_effect_settings())
 
     def start_playback(self):
         if not self.file_path:
@@ -249,6 +321,7 @@ class MainWindow(QMainWindow):
             ring_buffer_blocks=self.ring_buffer_blocks.value(),
             prefill_blocks=self.prefill_blocks.value(),
             band_gains_db=self.current_band_gains(),
+            effect_settings=self.current_effect_settings(),
         )
         self.worker.moveToThread(self.thread)
 

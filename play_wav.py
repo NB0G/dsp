@@ -1,6 +1,7 @@
 import time
 import wave
 from array import array
+from threading import Lock
 from threading import Thread
 
 import pyaudio
@@ -130,6 +131,7 @@ class EqualizerPlayer:
         ring_buffer_blocks=DEFAULT_RING_BUFFER_BLOCKS,
         prefill_blocks=DEFAULT_PREFILL_BLOCKS,
         band_gains_db=None,
+        effect_settings=None,
     ):
         self.file_path = file_path
         self.buffer_mode = buffer_mode
@@ -141,20 +143,40 @@ class EqualizerPlayer:
         self.band_gains_db = DEFAULT_BAND_GAINS_DB.copy()
         self.filters = []
         self.effects = None
+        self.effect_settings = {
+            "echo_enabled": True,
+            "clipping_enabled": True,
+            "echo_delay_seconds": 0.28,
+            "echo_feedback": 0.35,
+            "echo_mix": 0.35,
+            "clipping_threshold": 1000,
+        }
         self.ring_buffer = None
         self.stopped = False
+        self.settings_lock = Lock()
 
         if band_gains_db is not None:
             self.band_gains_db.update(band_gains_db)
 
-    def set_band_gain(self, band_number, gain_db):
-        self.band_gains_db[band_number] = gain_db
+        if effect_settings is not None:
+            self.effect_settings.update(effect_settings)
 
-        if self.filters:
-            if hasattr(self.filters, "set_band_gain"):
-                self.filters.set_band_gain(band_number, gain_db)
-            else:
-                self.filters[band_number - 1].set_gain_db(gain_db)
+    def set_band_gain(self, band_number, gain_db):
+        with self.settings_lock:
+            self.band_gains_db[band_number] = gain_db
+
+            if self.filters:
+                if hasattr(self.filters, "set_band_gain"):
+                    self.filters.set_band_gain(band_number, gain_db)
+                else:
+                    self.filters[band_number - 1].set_gain_db(gain_db)
+
+    def set_effect_settings(self, effect_settings):
+        with self.settings_lock:
+            self.effect_settings.update(effect_settings)
+
+            if self.effects is not None:
+                self.effects.set_settings(**effect_settings)
 
     def stop(self):
         self.stopped = True
@@ -175,11 +197,12 @@ class EqualizerPlayer:
             self.band_gains_db,
             self.filter_type,
         )
-        self.effects = AudioEffectChain(sample_rate)
+        self.effects = AudioEffectChain(sample_rate, **self.effect_settings)
 
     def process_audio_block(self, samples):
-        filtered_samples = process_samples_with_filter_bank(samples, self.filters)
-        return self.effects.process_samples(filtered_samples)
+        with self.settings_lock:
+            filtered_samples = process_samples_with_filter_bank(samples, self.filters)
+            return self.effects.process_samples(filtered_samples)
 
     def write_filtered_audio_to_buffer_dual_thread(self, wav_file):
         channels = wav_file.getnchannels()
@@ -306,6 +329,7 @@ def play_wav_with_filter_dual_thread(
     ring_buffer_blocks=DEFAULT_RING_BUFFER_BLOCKS,
     prefill_blocks=DEFAULT_PREFILL_BLOCKS,
     filter_type=FILTER_TYPE_CHEBYSHEV2_IIR,
+    effect_settings=None,
 ):
     player = EqualizerPlayer(
         file_path,
@@ -316,6 +340,7 @@ def play_wav_with_filter_dual_thread(
         ring_buffer_blocks,
         prefill_blocks,
         band_gains_db,
+        effect_settings,
     )
     player.play()
 
@@ -327,6 +352,7 @@ def play_wav_with_filter_single_thread(
     band_gains_db=None,
     ring_buffer_blocks=DEFAULT_RING_BUFFER_BLOCKS,
     filter_type=FILTER_TYPE_CHEBYSHEV2_IIR,
+    effect_settings=None,
 ):
     player = EqualizerPlayer(
         file_path,
@@ -337,6 +363,7 @@ def play_wav_with_filter_single_thread(
         ring_buffer_blocks,
         0,
         band_gains_db,
+        effect_settings,
     )
     player.play()
 
