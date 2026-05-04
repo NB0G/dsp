@@ -19,12 +19,10 @@ from util import (
 CHEBYSHEV_BANDS = [
     ("low_pass", 0, 100),
     ("band_pass", 100, 300),
-    ("band_pass", 300, 700),
-    ("band_pass", 700, 1500),
-    ("band_pass", 1500, 3100),
-    ("band_pass", 3100, 6300),
-    ("band_pass", 6300, 12700),
-    ("high_pass", 12700, 22050),
+    ("band_pass", 300, 1000),
+    ("band_pass", 1000, 3000),
+    ("band_pass", 3000, 8000),
+    ("high_pass", 8000, 22050),
 ]
 DEFAULT_TAP_COUNT = 2049
 DEFAULT_FFT_SIZE = 8192

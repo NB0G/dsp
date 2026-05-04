@@ -28,20 +28,18 @@ from play_wav import (
     DEFAULT_PREFILL_BLOCKS,
     DEFAULT_RING_BUFFER_BLOCKS,
     EqualizerPlayer,
-    FILTER_TYPE_CHEBYSHEV,
-    FILTER_TYPE_SINC,
+    FILTER_TYPE_CHEBYSHEV2_IIR,
+    FILTER_TYPE_CHEBYSHEV_WINDOW_FIR,
 )
 
 
 BANDS = [
     (1, "0-100"),
     (2, "100-300"),
-    (3, "300-700"),
-    (4, "700-1500"),
-    (5, "1500-3100"),
-    (6, "3100-6300"),
-    (7, "6300-12700"),
-    (8, "12700-22050"),
+    (3, "300-1000"),
+    (4, "1000-3000"),
+    (5, "3000-8000"),
+    (6, "8000-22050"),
 ]
 
 
@@ -131,8 +129,11 @@ class MainWindow(QMainWindow):
         self.buffer_mode.addItem("Однопоточный", BUFFER_MODE_SINGLE_THREAD)
 
         self.filter_type = QComboBox()
-        self.filter_type.addItem("Окно Хемминга FIR", FILTER_TYPE_SINC)
-        self.filter_type.addItem("Чебышев I рода IIR", FILTER_TYPE_CHEBYSHEV)
+        self.filter_type.addItem("БИХ Чебышева II рода", FILTER_TYPE_CHEBYSHEV2_IIR)
+        self.filter_type.addItem(
+            "КИХ, окно Чебышева",
+            FILTER_TYPE_CHEBYSHEV_WINDOW_FIR,
+        )
 
         self.block_size = QSpinBox()
         self.block_size.setRange(64, 8192)

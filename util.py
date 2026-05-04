@@ -31,6 +31,37 @@ def build_hamming_window(size):
     ]
 
 
+def build_chebyshev_window(size, attenuation_db=80):
+    if size <= 1:
+        return [1]
+
+    if np is None:
+        return build_hamming_window(size)
+
+    order = size - 1
+    beta = math.cosh(
+        math.acosh(10 ** (abs(attenuation_db) / 20)) / order
+    )
+    coefficients = []
+
+    for index in range(size):
+        value = beta * math.cos(math.pi * index / size)
+        if abs(value) <= 1:
+            coefficient = math.cos(order * math.acos(value))
+        else:
+            coefficient = math.cosh(order * math.acosh(abs(value)))
+            if value < -1 and order % 2 == 1:
+                coefficient = -coefficient
+
+        coefficients.append(coefficient)
+
+    window = np.fft.fft(coefficients).real
+    window = np.fft.fftshift(window)
+    window = window / max(abs(window))
+
+    return window.tolist()
+
+
 def apply_window(kernel, window):
     return [
         kernel_value * window_value
@@ -173,6 +204,39 @@ class StreamingFirFilter:
 
         samples_fft = rfft(samples, fft_size)
         return irfft(samples_fft * kernel_fft, fft_size)[:output_size]
+
+
+class StreamingIirFilter:
+    def __init__(self, b_coefficients, a_coefficients):
+        if a_coefficients[0] == 0:
+            raise ValueError("First IIR denominator coefficient must be non-zero")
+
+        a0 = a_coefficients[0]
+        self.b = [coefficient / a0 for coefficient in b_coefficients]
+        self.a = [coefficient / a0 for coefficient in a_coefficients]
+        self.state = [0] * (max(len(self.a), len(self.b)) - 1)
+
+    def process_sample(self, sample):
+        output = self.b[0] * sample
+
+        if self.state:
+            output += self.state[0]
+
+        for index in range(1, len(self.state)):
+            b_value = self.b[index] if index < len(self.b) else 0
+            a_value = self.a[index] if index < len(self.a) else 0
+            self.state[index - 1] = self.state[index] + b_value * sample - a_value * output
+
+        if self.state:
+            last_index = len(self.state)
+            b_value = self.b[last_index] if last_index < len(self.b) else 0
+            a_value = self.a[last_index] if last_index < len(self.a) else 0
+            self.state[-1] = b_value * sample - a_value * output
+
+        return output
+
+    def process_samples(self, samples):
+        return [self.process_sample(sample) for sample in samples]
 
 
 class BlockFrequencyFilter:
